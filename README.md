@@ -1,6 +1,6 @@
-# Verisure_API
+# FlexitGo_API
 
-A one-file python3 program for reading and changing status of verisure devices through verisure grafql API. This work is based on the good work of https://github.com/persandstrom/python-verisure
+A one-file python3 program for reading and changing status of Flexit FTX devices through FlexitGO API. This work is based on the good work of 
 
 The program can be places in your own integration as one file, it doesen't requiere any installations
 
