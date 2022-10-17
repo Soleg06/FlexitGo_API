@@ -10,7 +10,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
 
-DEFAULT_TIMEOUT = 5 # seconds
+DEFAULT_TIMEOUT = 20 # seconds
 
 class TimeoutHTTPAdapter(HTTPAdapter):
 
@@ -124,7 +124,8 @@ class FlexitGo:
         self.TOKEN_PATH = f"{self.API_URL}/Token"
         self.PLANTS_PATH = f"{self.API_URL}/Plants"
         self.DATAPOINTS_PATH = f"{self.API_URL}/DataPoints"
-        self.FILTER_PATH = f"{self.DATAPOINTS_PATH}/Values?filterId="
+        #self.FILTER_PATH = f"{self.DATAPOINTS_PATH}/Values?filterId="
+        self.VALUES_PATH = f"{self.DATAPOINTS_PATH}/Values"
 
         self.session = requests.Session()
 
@@ -151,7 +152,6 @@ class FlexitGo:
             }
 
 
-
     def _path(self, path):
         return f"{self.plantId}{path}"
 
@@ -160,10 +160,18 @@ class FlexitGo:
         return f"{self.FILTER_PATH}{urllib.parse.quote(path)}"
 
 
-    def _create_url_from_paths(self, paths):
-        url = "["
+    #def _create_url_from_paths(self, paths):
+    #    url = "["
+    #    for path in paths:
+    #        url += f"""{{"DataPoints":"{self._path(path)}"}}{ "," if path != paths[-1] else "]"}"""
+    #    return url
+
+
+    def _create_url_from_paths2(self, paths):
+        url = list()
         for path in paths:
-            url += f"""{{"DataPoints":"{self._path(path)}"}}{ "," if path != paths[-1] else "]"}"""
+            sub = {"DataPoints" : self._path(path)}
+            url.append(sub)
         return url
 
 
@@ -237,6 +245,14 @@ class FlexitGo:
         return round(((frånluft - avluft)/(frånluft - uteluft)) *100, 1)
 
 
+    def _validateToken(self):
+
+        now = arrow.now("Europe/Stockholm")
+        if now >= self.tokenValidTo.shift(hours=-1):
+            print("Token about to expire loggin in again")
+            self.login(self.username, self.password)
+
+
     def login(self, user, password):
         self.username = user
         self.password = password
@@ -245,13 +261,17 @@ class FlexitGo:
 
         try:
             response = self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data)
-
             out = json.loads(response.text)
+
+            out = response.json()
+
             access_token = f"Bearer {out['access_token']}"
             self.headers["Authorization"] = access_token
+            fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
+            self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
             self.getPlant()
 
-            return json.loads(response.text)
+            return response.json()
 
         except Exception as e:
             print(e)
@@ -261,7 +281,7 @@ class FlexitGo:
         out = dict()
         try:
             response = self.session.get("https://api.climatixic.com/Plants", headers=self.headers)
-            out = json.loads(response.text)
+            out = response.json()
 
             for d in out["items"]:
                 self.plantId = d["id"]
@@ -274,10 +294,15 @@ class FlexitGo:
 
     def getDevice(self):
         out = dict()
-        url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
+        #url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
+        paramlist = self._create_url_from_paths2(self.DEVICE_INFO_PATH_LIST)
+        param = {
+                "filterId": json.dumps(paramlist, separators=(',', ':'))
+                }
+
         try:
-            response = self.session.get(url, headers=self.headers)
-            self.deviceData = json.loads(response.text)
+            response = self.session.get(self.VALUES_PATH, headers=self.headers, params=param)
+            self.deviceData = response.json()
 
             #pprint(self.deviceData)
 
@@ -298,11 +323,17 @@ class FlexitGo:
 
 
     def getSensors(self):
+        self._validateToken()
         out = dict()
-        url = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
+        #url1 = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
+        paramlist = self._create_url_from_paths2(self.SENSOR_DATA_PATH_LIST)
+        param = {
+                "filterId": json.dumps(paramlist, separators=(',', ':'))
+                }
+
         try:
-            response = self.session.get(url, headers=self.headers)
-            self.sensorData = json.loads(response.text)
+            response = self.session.get(self.VALUES_PATH, headers=self.headers, params=param)
+            self.sensorData = response.json()
 
             #pprint(self.sensorData)
 
@@ -357,13 +388,14 @@ class FlexitGo:
 
         try:
             response = self.session.put(url, headers=self.headers, data=data)
-            out = json.loads(response.text)
+            out = response.json()
 
             return out["stateTexts"][self._path(path)] == "Success"
 
         except Exception as e:
             print(e)
             return False
+
 
     def setHomeTemp(self, temp):
         return self.setSensor(self.HOME_AIR_TEMPERATURE_PATH, temp)
@@ -423,19 +455,23 @@ class FlexitGo:
     def setFireplaceDuration(self, duration):
         return self.setSensor(self.FIREPLACE_DURATION_PATH, duration)
 
+
     def setBoostDuration(self, duration):
         return self.setSensor(self.BOOST_DURATION_PATH, duration)
+
 
     def setAwayDelay(self, delay):
         return self.setSensor(self.AWAY_DELAY_PATH, delay)
 
+
     def setHeaterState(self, heater_bool: bool) -> bool:
         return self.setSensor(self.HEATER_PATH, 1 if heater_bool else 0)
+
 
     def setCalendarActive(self):
         null = None
         return self.setSensor(self.MODE_HOME_HIGH_CAL_PUT_PATH, null)
 
+
     def setCalendarTemporaryOverride(self, value):
         return self.setSensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH, value)
-    
