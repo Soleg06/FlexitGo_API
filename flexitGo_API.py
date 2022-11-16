@@ -4,11 +4,30 @@
 import json
 import urllib.parse
 from pprint import pprint
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 import arrow
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
+
+DEFAULT_TIMEOUT = 20 # seconds
+
+class TimeoutHTTPAdapter(HTTPAdapter):
+
+    def __init__(self, *args, **kwargs):
+        self.timeout = DEFAULT_TIMEOUT
+        if "timeout" in kwargs:
+            self.timeout = kwargs["timeout"]
+            del kwargs["timeout"]
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        timeout = kwargs.get("timeout")
+        if timeout is None:
+            kwargs["timeout"] = self.timeout
+        return super().send(request, **kwargs)
 
 DEFAULT_TIMEOUT = 20 # seconds
 
@@ -136,7 +155,11 @@ class FlexitGo:
                 total=3,
                 backoff_factor=1,
                 status_forcelist=[429, 500, 502, 503, 504],
+<<<<<<< HEAD
                 allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "¨TRACE", "POST"])
+=======
+                method_whitelist=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "¨TRACE", "POST"])
+>>>>>>> 4290fe0445e8dc20f165e9a2eeb56fd4a467c923
 
         self.session.mount("http://", TimeoutHTTPAdapter(max_retries=retry_strategy))
         self.session.mount("https://", TimeoutHTTPAdapter(max_retries=retry_strategy))
@@ -264,6 +287,7 @@ class FlexitGo:
             out = json.loads(response.text)
 
             out = response.json()
+<<<<<<< HEAD
 
             access_token = f"Bearer {out['access_token']}"
             self.headers["Authorization"] = access_token
@@ -273,6 +297,17 @@ class FlexitGo:
 
             return response.json()
 
+=======
+
+            access_token = f"Bearer {out['access_token']}"
+            self.headers["Authorization"] = access_token
+            fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
+            self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
+            self.getPlant()
+
+            return response.json()
+
+>>>>>>> 4290fe0445e8dc20f165e9a2eeb56fd4a467c923
         except Exception as e:
             print(e)
 
@@ -282,10 +317,17 @@ class FlexitGo:
         try:
             response = self.session.get("https://api.climatixic.com/Plants", headers=self.headers)
             out = response.json()
+<<<<<<< HEAD
 
             for d in out["items"]:
                 self.plantId = d["id"]
 
+=======
+
+            for d in out["items"]:
+                self.plantId = d["id"]
+
+>>>>>>> 4290fe0445e8dc20f165e9a2eeb56fd4a467c923
         except Exception as e:
             print(e)
 
@@ -389,9 +431,15 @@ class FlexitGo:
         try:
             response = self.session.put(url, headers=self.headers, data=data)
             out = response.json()
+<<<<<<< HEAD
 
             return out["stateTexts"][self._path(path)] == "Success"
 
+=======
+
+            return out["stateTexts"][self._path(path)] == "Success"
+
+>>>>>>> 4290fe0445e8dc20f165e9a2eeb56fd4a467c923
         except Exception as e:
             print(e)
             return False
@@ -475,4 +523,3 @@ class FlexitGo:
 
     def setCalendarTemporaryOverride(self, value):
         return self.setSensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH, value)
-
