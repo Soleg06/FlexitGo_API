@@ -1,8 +1,8 @@
-import olis_flexitgo
+import flexitGo_API
 from pprint import pprint
 
-fg = olis_flexitgo.FlexitGo()
-fg.login("firsname.lastname@something.com","*********")
+fg = flexitGo_API.FlexitGo()
+fg.login("firstname.lastname@something.com","*********")
 
 pprint(fg.getSensors())
 pprint(fg.getDevice())
