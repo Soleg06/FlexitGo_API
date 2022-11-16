@@ -4,16 +4,14 @@
 import json
 import urllib.parse
 from pprint import pprint
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
 
 import arrow
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-DEFAULT_TIMEOUT = 20 # seconds
 
+DEFAULT_TIMEOUT = 20 # seconds
 class TimeoutHTTPAdapter(HTTPAdapter):
 
     def __init__(self, *args, **kwargs):
@@ -28,24 +26,7 @@ class TimeoutHTTPAdapter(HTTPAdapter):
         if timeout is None:
             kwargs["timeout"] = self.timeout
         return super().send(request, **kwargs)
-
-DEFAULT_TIMEOUT = 20 # seconds
-
-class TimeoutHTTPAdapter(HTTPAdapter):
-
-    def __init__(self, *args, **kwargs):
-        self.timeout = DEFAULT_TIMEOUT
-        if "timeout" in kwargs:
-            self.timeout = kwargs["timeout"]
-            del kwargs["timeout"]
-        super().__init__(*args, **kwargs)
-
-    def send(self, request, **kwargs):
-        timeout = kwargs.get("timeout")
-        if timeout is None:
-            kwargs["timeout"] = self.timeout
-        return super().send(request, **kwargs)
-
+    
 class FlexitGo:
 
     def __init__(self):
