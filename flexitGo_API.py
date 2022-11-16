@@ -1,12 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import requests
-import urllib.parse
 import json
-import arrow
+import urllib.parse
 from pprint import pprint
 
+import arrow
+import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
+
+DEFAULT_TIMEOUT = 20 # seconds
+
+class TimeoutHTTPAdapter(HTTPAdapter):
+
+    def __init__(self, *args, **kwargs):
+        self.timeout = DEFAULT_TIMEOUT
+        if "timeout" in kwargs:
+            self.timeout = kwargs["timeout"]
+            del kwargs["timeout"]
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        timeout = kwargs.get("timeout")
+        if timeout is None:
+            kwargs["timeout"] = self.timeout
+        return super().send(request, **kwargs)
 
 class FlexitGo:
 
@@ -105,7 +124,22 @@ class FlexitGo:
         self.TOKEN_PATH = f"{self.API_URL}/Token"
         self.PLANTS_PATH = f"{self.API_URL}/Plants"
         self.DATAPOINTS_PATH = f"{self.API_URL}/DataPoints"
-        self.FILTER_PATH = f"{self.DATAPOINTS_PATH}/Values?filterId="
+        #self.FILTER_PATH = f"{self.DATAPOINTS_PATH}/Values?filterId="
+        self.VALUES_PATH = f"{self.DATAPOINTS_PATH}/Values"
+
+        self.session = requests.Session()
+
+        assert_status_hook = lambda response, *args, **kwargs: response.raise_for_status()
+        self.session.hooks["response"].append(assert_status_hook)
+
+        retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "¨TRACE", "POST"])
+
+        self.session.mount("http://", TimeoutHTTPAdapter(max_retries=retry_strategy))
+        self.session.mount("https://", TimeoutHTTPAdapter(max_retries=retry_strategy))
 
         self.headers = {
             "Accept": "application/json",
@@ -117,8 +151,6 @@ class FlexitGo:
             "Host": "api.climatixic.com"
             }
 
-        self.session = requests.Session()
-
 
     def _path(self, path):
         return f"{self.plantId}{path}"
@@ -128,10 +160,18 @@ class FlexitGo:
         return f"{self.FILTER_PATH}{urllib.parse.quote(path)}"
 
 
-    def _create_url_from_paths(self, paths):
-        url = "["
+    #def _create_url_from_paths(self, paths):
+    #    url = "["
+    #    for path in paths:
+    #        url += f"""{{"DataPoints":"{self._path(path)}"}}{ "," if path != paths[-1] else "]"}"""
+    #    return url
+
+
+    def _create_url_from_paths2(self, paths):
+        url = list()
         for path in paths:
-            url += f"""{{"DataPoints":"{self._path(path)}"}}{ "," if path != paths[-1] else "]"}"""
+            sub = {"DataPoints" : self._path(path)}
+            url.append(sub)
         return url
 
 
@@ -205,98 +245,138 @@ class FlexitGo:
         return round(((frånluft - avluft)/(frånluft - uteluft)) *100, 1)
 
 
+    def _validateToken(self):
+
+        now = arrow.now("Europe/Stockholm")
+        if now >= self.tokenValidTo.shift(hours=-1):
+            print("Token about to expire loggin in again")
+            self.login(self.username, self.password)
+
+
     def login(self, user, password):
         self.username = user
         self.password = password
 
         data = f"grant_type=password&username={self.username}&password={self.password}"
 
-        response = self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data)
+        try:
+            response = self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data)
+            out = json.loads(response.text)
 
-        out = json.loads(response.text)
-        access_token = f"Bearer {out['access_token']}"
-        self.headers["Authorization"] = access_token
-        self.getPlant()
+            out = response.json()
 
-        return json.loads(response.text)
+            access_token = f"Bearer {out['access_token']}"
+            self.headers["Authorization"] = access_token
+            fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
+            self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
+            self.getPlant()
+
+            return response.json()
+
+        except Exception as e:
+            print(e)
 
 
     def getPlant(self):
-        response = self.session.get("https://api.climatixic.com/Plants", headers=self.headers)
-        out = json.loads(response.text)
+        out = dict()
+        try:
+            response = self.session.get("https://api.climatixic.com/Plants", headers=self.headers)
+            out = response.json()
 
-        for d in out["items"]:
-            self.plantId = d["id"]
+            for d in out["items"]:
+                self.plantId = d["id"]
+
+        except Exception as e:
+            print(e)
 
         return out
 
 
     def getDevice(self):
-        url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
-        response = self.session.get(url, headers=self.headers)
-        self.deviceData = json.loads(response.text)
-
-        #pprint(self.deviceData)
-
         out = dict()
-        out["fw"] = self._str_device(self.FIRMWARE_REVISION_PATH)
-        out["modelName"] = self._str_device(self.MODEL_NAME_PATH)
-        out["modelInfo"] = self._str_device(self.MODEL_INFORMATION_PATH)
-        out["serialInfo"] = self._str_device(self.SERIAL_NUMBER_PATH)
-        out["systemStatus"] = self._str_device(self.SYSTEM_STATUS_PATH)
-        out["status"] = self._str_device(self.OFFLINE_ONLINE_PATH)
-        out["deviceDescription"] = self._str_device(self.DEVICE_DESCRIPTION_PATH)
-        out["applicationSoftwareVersion"] = self._str_device(self.APPLICATION_SOFTWARE_VERSION_PATH)
-        out["lastRestartReason"] = self._int_device(self.LAST_RESTART_REASON_PATH)
+        #url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
+        paramlist = self._create_url_from_paths2(self.DEVICE_INFO_PATH_LIST)
+        param = {
+                "filterId": json.dumps(paramlist, separators=(',', ':'))
+                }
+
+        try:
+            response = self.session.get(self.VALUES_PATH, headers=self.headers, params=param)
+            self.deviceData = response.json()
+
+            #pprint(self.deviceData)
+
+            out["fw"] = self._str_device(self.FIRMWARE_REVISION_PATH)
+            out["modelName"] = self._str_device(self.MODEL_NAME_PATH)
+            out["modelInfo"] = self._str_device(self.MODEL_INFORMATION_PATH)
+            out["serialInfo"] = self._str_device(self.SERIAL_NUMBER_PATH)
+            out["systemStatus"] = self._str_device(self.SYSTEM_STATUS_PATH)
+            out["status"] = self._str_device(self.OFFLINE_ONLINE_PATH)
+            out["deviceDescription"] = self._str_device(self.DEVICE_DESCRIPTION_PATH)
+            out["applicationSoftwareVersion"] = self._str_device(self.APPLICATION_SOFTWARE_VERSION_PATH)
+            out["lastRestartReason"] = self._int_device(self.LAST_RESTART_REASON_PATH)
+
+        except Exception as e:
+            print(e)
 
         return out
 
 
     def getSensors(self):
-        url = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
-        response = self.session.get(url, headers=self.headers)
-        self.sensorData = json.loads(response.text)
-
-        #pprint(self.sensorData)
-
+        self._validateToken()
         out = dict()
-        out["temps"] = dict()
-        out["fläkt"] = dict()
-        out["filter"] = dict()
-        out["alarm"] = dict()
-        out["modes"] = dict()
+        #url1 = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
+        paramlist = self._create_url_from_paths2(self.SENSOR_DATA_PATH_LIST)
+        param = {
+                "filterId": json.dumps(paramlist, separators=(',', ':'))
+                }
 
-        out["temps"]["home_air_temperature"] = self._float_sensor(self.HOME_AIR_TEMPERATURE_PATH)
-        out["temps"]["away_air_temperature"] = self._float_sensor(self.AWAY_AIR_TEMPERATURE_PATH)
-        out["temps"]["Uteluft"]  = self._float_sensor(self.OUTSIDE_AIR_TEMPERATURE_PATH)
-        out["temps"]["Tilluft"]  = self._float_sensor(self.SUPPLY_AIR_TEMPERATURE_PATH)
-        out["temps"]["Avluft"]  = self._float_sensor(self.EXHAUST_AIR_TEMPERATURE_PATH)
-        out["temps"]["Frånluft"]  = self._float_sensor(self.EXTRACT_AIR_TEMPERATURE_PATH)
-        out["temps"]["room_temperature"]  = self._float_sensor(self.ROOM_TEMPERATURE_PATH)
-        out["modes"]["electric_heater"]  = self._bool_sensor(self.HEATER_PATH)
-        out["modes"]["ventilation_mode"]  = self._ventilation_mode(self._int_sensor(self.MODE_PATH))
-        out["modes"]["ventilation_mode_cal"]  = self._ventilation_mode(self._int_sensor(self.MODE_HOME_HIGH_CAL_PUT_PATH))
-        out["modes"]["heat_exchanger_speed"] = self._int_sensor(self.HEAT_EXCHANGER_SPEED_PATH)
-        out["fläkt"]["supply_fan_speed"]  = self._int_sensor(self.SUPPLY_FAN_SPEED_PATH)
-        out["fläkt"]["supply_fan_control_signal"]  = self._float_sensor(self.SUPPLY_FAN_CONTROL_SIGNAL_PATH)
-        out["fläkt"]["extract_fan_speed"]  = self._int_sensor(self.EXTRACT_FAN_SPEED_PATH)
-        out["fläkt"]["extract_fan_control_signal"]  = self._float_sensor(self.EXTRACT_FAN_CONTROL_SIGNAL_PATH)
-        out["modes"]["additional_heater"]  = self._bool_sensor(self.ADDITIONAL_HEATER_PATH)
-        out["alarm"]["alarm_code_a"]  = self._int_sensor(self.ALARM_CODE_A_PATH)
-        out["alarm"]["alarm_code_b"]  = self._int_sensor(self.ALARM_CODE_B_PATH)
-        out["modes"]["calendar_temporary_override"]  = self._bool_sensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH)
-        out["modes"]["calendar_active"] = self._calendar_active(self.MODE_HOME_HIGH_CAL_PUT_PATH)
-        out["modes"]["boost_duration"] = self._int_sensor(self.BOOST_DURATION_PATH)
-        out["modes"]["away_delay"]  = self._int_sensor(self.AWAY_DELAY_PATH)
-        out["modes"]["fireplace_duration"]  = self._int_sensor(self.FIREPLACE_DURATION_PATH)
+        try:
+            response = self.session.get(self.VALUES_PATH, headers=self.headers, params=param)
+            self.sensorData = response.json()
 
-        out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"])
-        out["temps"]["verkningsgrad_frånluft"] = self._from_efficiency(out["temps"]["Uteluft"], out["temps"]["Frånluft"], out["temps"]["Avluft"])
+            #pprint(self.sensorData)
 
-        now = arrow.now()
-        out["filter"]["filter_exchanged"]  = now.shift(hours= -self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
-        out["filter"]["filter_time_for_exchange"]  = now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH)-self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
-        out["filter"]["dirty_filter"]  = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
+            out["temps"] = dict()
+            out["fläkt"] = dict()
+            out["filter"] = dict()
+            out["alarm"] = dict()
+            out["modes"] = dict()
+
+            out["temps"]["home_air_temperature"] = self._float_sensor(self.HOME_AIR_TEMPERATURE_PATH)
+            out["temps"]["away_air_temperature"] = self._float_sensor(self.AWAY_AIR_TEMPERATURE_PATH)
+            out["temps"]["Uteluft"]  = self._float_sensor(self.OUTSIDE_AIR_TEMPERATURE_PATH)
+            out["temps"]["Tilluft"]  = self._float_sensor(self.SUPPLY_AIR_TEMPERATURE_PATH)
+            out["temps"]["Avluft"]  = self._float_sensor(self.EXHAUST_AIR_TEMPERATURE_PATH)
+            out["temps"]["Frånluft"]  = self._float_sensor(self.EXTRACT_AIR_TEMPERATURE_PATH)
+            out["temps"]["room_temperature"]  = self._float_sensor(self.ROOM_TEMPERATURE_PATH)
+            out["modes"]["electric_heater"]  = self._bool_sensor(self.HEATER_PATH)
+            out["modes"]["ventilation_mode"]  = self._ventilation_mode(self._int_sensor(self.MODE_PATH))
+            out["modes"]["ventilation_mode_cal"]  = self._ventilation_mode(self._int_sensor(self.MODE_HOME_HIGH_CAL_PUT_PATH))
+            out["modes"]["heat_exchanger_speed"] = self._int_sensor(self.HEAT_EXCHANGER_SPEED_PATH)
+            out["fläkt"]["supply_fan_speed"]  = self._int_sensor(self.SUPPLY_FAN_SPEED_PATH)
+            out["fläkt"]["supply_fan_control_signal"]  = self._float_sensor(self.SUPPLY_FAN_CONTROL_SIGNAL_PATH)
+            out["fläkt"]["extract_fan_speed"]  = self._int_sensor(self.EXTRACT_FAN_SPEED_PATH)
+            out["fläkt"]["extract_fan_control_signal"]  = self._float_sensor(self.EXTRACT_FAN_CONTROL_SIGNAL_PATH)
+            out["modes"]["additional_heater"]  = self._bool_sensor(self.ADDITIONAL_HEATER_PATH)
+            out["alarm"]["alarm_code_a"]  = self._int_sensor(self.ALARM_CODE_A_PATH)
+            out["alarm"]["alarm_code_b"]  = self._int_sensor(self.ALARM_CODE_B_PATH)
+            out["modes"]["calendar_temporary_override"]  = self._bool_sensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH)
+            out["modes"]["calendar_active"] = self._calendar_active(self.MODE_HOME_HIGH_CAL_PUT_PATH)
+            out["modes"]["boost_duration"] = self._int_sensor(self.BOOST_DURATION_PATH)
+            out["modes"]["away_delay"]  = self._int_sensor(self.AWAY_DELAY_PATH)
+            out["modes"]["fireplace_duration"]  = self._int_sensor(self.FIREPLACE_DURATION_PATH)
+
+            out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"])
+            out["temps"]["verkningsgrad_frånluft"] = self._from_efficiency(out["temps"]["Uteluft"], out["temps"]["Frånluft"], out["temps"]["Avluft"])
+
+            now = arrow.now()
+            out["filter"]["filter_exchanged"]  = now.shift(hours= -self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
+            out["filter"]["filter_time_for_exchange"]  = now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH)-self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
+            out["filter"]["dirty_filter"]  = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
+
+        except Exception as e:
+            print(e)
 
         return out
 
@@ -306,10 +386,15 @@ class FlexitGo:
         url=self._escaped_datapoints_url(self._path(path))
         data=json.dumps({"Value": data_body})
 
-        response = self.session.put(url, headers=self.headers, data=data)
-        out = json.loads(response.text)
+        try:
+            response = self.session.put(url, headers=self.headers, data=data)
+            out = response.json()
 
-        return out["stateTexts"][self._path(path)] == "Success"
+            return out["stateTexts"][self._path(path)] == "Success"
+
+        except Exception as e:
+            print(e)
+            return False
 
 
     def setHomeTemp(self, temp):
@@ -370,18 +455,23 @@ class FlexitGo:
     def setFireplaceDuration(self, duration):
         return self.setSensor(self.FIREPLACE_DURATION_PATH, duration)
 
+
     def setBoostDuration(self, duration):
         return self.setSensor(self.BOOST_DURATION_PATH, duration)
+
 
     def setAwayDelay(self, delay):
         return self.setSensor(self.AWAY_DELAY_PATH, delay)
 
+
     def setHeaterState(self, heater_bool: bool) -> bool:
         return self.setSensor(self.HEATER_PATH, 1 if heater_bool else 0)
+
 
     def setCalendarActive(self):
         null = None
         return self.setSensor(self.MODE_HOME_HIGH_CAL_PUT_PATH, null)
+
 
     def setCalendarTemporaryOverride(self, value):
         return self.setSensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH, value)
