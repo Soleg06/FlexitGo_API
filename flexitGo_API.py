@@ -261,8 +261,7 @@ class FlexitGo:
 
         try:
             response = self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data)
-            out = json.loads(response.text)
-
+            #out = json.loads(response.text)
             out = response.json()
 
             access_token = f"Bearer {out['access_token']}"
@@ -271,7 +270,7 @@ class FlexitGo:
             self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
             self.getPlant()
 
-            return response.json()
+            return out
 
         except Exception as e:
             print(e)
