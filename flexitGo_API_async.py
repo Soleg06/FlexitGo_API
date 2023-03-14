@@ -2,18 +2,17 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-import json
 import urllib.parse
 from pprint import pprint
 
 import aiohttp
 import arrow
+import ujson
 
 
 class FlexitGo:
 
     def __init__(self):
-
         # Put paths
         self.MODE_AWAY_PUT_PATH                 = ";1!005000032000055"
         self.MODE_HOME_HIGH_CAL_PUT_PATH        = ";1!01300002A000055"
@@ -121,20 +120,17 @@ class FlexitGo:
            }
 
 
-    async def _DoRequest(self, method, url, headers, data=None, params=None):
-        
+    async def _doRequest(self, method, url, headers, data=None, params=None):
         async with aiohttp.ClientSession(base_url=self.API_URL) as session:
             async with session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
                 return await response.json()
         
     
     async def _path(self, path):
-        
         return f"{self.plantId}{path}"
 
 
     async def _escaped_filter_url(self, path):
-        
         return f"{self.FILTER_PATH}{urllib.parse.quote(path)}"
 
 
@@ -146,7 +142,6 @@ class FlexitGo:
 
 
     async def _create_url_from_paths2(self, paths):
-        
         url = list()
         for path in paths:
             sub = {"DataPoints" : await self._path(path)}
@@ -155,47 +150,38 @@ class FlexitGo:
 
 
     async def _escaped_datapoints_url(self, path):
-        
         return f"{self.DATAPOINTS_PATH}/{urllib.parse.quote(path)}"
 
 
     async def _str_device(self, path):
-        
         return self.deviceData["values"][f"{self.plantId}{path}"]["value"]
     
 
     async def _str_sensor(self, path):
-        
         return self.sensorData["values"][f"{self.plantId}{path}"]["value"]["value"]
 
 
     async def _present_priority(self, path):
-        
         return self.sensorData["values"][f"{self.plantId}{path}"]["value"]["presentPriority"]
 
 
     async def _int_device(self, path):
-        
         return int(await self._str_device(path))
 
 
     async def _int_sensor(self, path):
-        
         return int(await self._str_sensor(path))
 
 
     async def _bool_sensor(self, path):
-        
         return bool(await self._str_sensor(path))
 
 
     async def _float_sensor(self, path):
-        
         return round(float(await self._str_sensor(path)), 1)
 
 
     async def _calendar_active(self, path):
-        
         if (await self._present_priority(path) == 15):
             return True
         else:
@@ -203,7 +189,6 @@ class FlexitGo:
 
 
     async def _dirty_filter(self, filter_time_for_exchange):
-        
         if arrow.get(filter_time_for_exchange) >= arrow.now():
             return False
         else:
@@ -211,7 +196,6 @@ class FlexitGo:
 
 
     async def _ventilation_mode(self, ventilation_int):
-        
         mode = {
             0: "Null",
             1: "OFF",
@@ -222,23 +206,19 @@ class FlexitGo:
             6: "FIREPLACE",
             7: "HIGH_DELAYED"
         }
-
         return mode.get(ventilation_int,f"Unknown mode: {str(ventilation_int)}")
 
 
 
     async def _to_efficiency(self, tilluft, uteluft, frånluft):
-        
         return round(((tilluft - uteluft)/(frånluft - uteluft)) * 100, 1)
 
 
     async def _from_efficiency(self, uteluft, frånluft, avluft):
-        
         return round(((frånluft - avluft)/(frånluft - uteluft)) *100, 1)
 
 
     async def _validateToken(self):
-
         now = arrow.now("Europe/Stockholm")
         if now >= self.tokenValidTo.shift(hours=-1):
             print("Token about to expire loggin in again")
@@ -246,7 +226,6 @@ class FlexitGo:
 
 
     async def login(self, user, password):
-        
         #self.session = aiohttp.ClientSession()
         self.username = user
         self.password = password
@@ -254,7 +233,7 @@ class FlexitGo:
         data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
                                                        
         try:
-            out = await self._DoRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
+            out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
             #async with self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data) as response:
             #    out = await response.json()
             access_token = f"Bearer {out['access_token']}"
@@ -262,7 +241,6 @@ class FlexitGo:
             fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
             self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
             await self.getPlant()
-
             return out
 
         except Exception as e:
@@ -270,10 +248,9 @@ class FlexitGo:
 
              
     async def getPlant(self):
-        
         out = dict()
         try:
-            out = await self._DoRequest(method="GET", url=self.PLANTS_PATH, headers=self.headers)
+            out = await self._doRequest(method="GET", url=self.PLANTS_PATH, headers=self.headers)
             #async with self.session.get("https://api.climatixic.com/Plants", headers=self.headers) as response:
             #    out = await response.json()
             for d in out["items"]:
@@ -286,16 +263,15 @@ class FlexitGo:
 
 
     async def getDevice(self):
-        
         out = dict()
         #url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
         paramlist = await self._create_url_from_paths2(self.DEVICE_INFO_PATH_LIST)
         param = {
-                "filterId": json.dumps(paramlist, separators=(',', ':'))
+                "filterId": ujson.dumps(paramlist, separators=(',', ':'))
                 }
 
         try:
-            self.deviceData = await self._DoRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
+            self.deviceData = await self._doRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
             #async with self.session.get(self.VALUES_PATH, headers=self.headers, params=param) as response:
             #    self.deviceData = await response.json()
 
@@ -319,17 +295,14 @@ class FlexitGo:
 
 
     async def getSensors(self):
-        
         await self._validateToken()
         out = dict()
         #url1 = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
         paramlist = await self._create_url_from_paths2(self.SENSOR_DATA_PATH_LIST)
-        param = {
-                "filterId": json.dumps(paramlist, separators=(',', ':'))
-                }
+        param = {"filterId": ujson.dumps(paramlist, separators=(',', ':'))}
 
         try:
-            self.sensorData = await self._DoRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
+            self.sensorData = await self._doRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
             #async with self.session.get(self.VALUES_PATH, headers=self.headers, params=param) as response:
             #    self.sensorData = await response.json()
 
@@ -368,7 +341,7 @@ class FlexitGo:
             out["temps"]["verkningsgrad_tilluft"] = await self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"])
             out["temps"]["verkningsgrad_frånluft"] = await self._from_efficiency(out["temps"]["Uteluft"], out["temps"]["Frånluft"], out["temps"]["Avluft"])
 
-            now = arrow.now()
+            now = arrow.now("Europe/Stockholm")
             out["filter"]["filter_exchanged"]  = now.shift(hours= - await self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
             out["filter"]["filter_time_for_exchange"]  = now.shift(hours = await self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH) - await self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
             out["filter"]["dirty_filter"]  = await self._dirty_filter(out["filter"]["filter_time_for_exchange"])
@@ -380,13 +353,12 @@ class FlexitGo:
 
 
     async def setSensor(self, path, body):
-        
         data_body = None if body is None else str(body)
         url = await self._escaped_datapoints_url(self._path(path))
-        data=json.dumps({"Value": data_body})
+        data=ujson.dumps({"Value": data_body})
 
         try:
-            out = await self._DoRequest(method="PUT", url=url, headers=self.headers, data=data)
+            out = await self._doRequest(method="PUT", url=url, headers=self.headers, data=data)
             #async with self.session.put(url, headers=self.headers, data=data) as response:
             #    out = await response.json()
 
@@ -398,17 +370,14 @@ class FlexitGo:
 
 
     async def setHomeTemp(self, temp):
-        
         return await self.setSensor(self.HOME_AIR_TEMPERATURE_PATH, temp)
 
 
     async def setAwayTemp(self, temp):
-        
         return await self.setSensor(self.AWAY_AIR_TEMPERATURE_PATH, temp)
 
 
     async def setPresetMode(self, presetMode):
-
         acceptedModes = ["HOME", "AWAY", "AWAY_DELAYED", "HIGH", "HIGH_ONTIMER", "FIREPLACE"]
 
         if (presetMode not in acceptedModes):
@@ -455,31 +424,25 @@ class FlexitGo:
 
 
     async def setFireplaceDuration(self, duration):
-        
         return await self.setSensor(self.FIREPLACE_DURATION_PATH, duration)
 
 
     async def setBoostDuration(self, duration):
-        
         return await self.setSensor(self.BOOST_DURATION_PATH, duration)
 
 
     async def setAwayDelay(self, delay):
-        
         return await self.setSensor(self.AWAY_DELAY_PATH, delay)
 
 
     async def setHeaterState(self, heater_bool: bool) -> bool:
-        
         return await self.setSensor(self.HEATER_PATH, 1 if heater_bool else 0)
 
 
     async def setCalendarActive(self):
-        
         null = None
         return await self.setSensor(self.MODE_HOME_HIGH_CAL_PUT_PATH, null)
 
 
     async def setCalendarTemporaryOverride(self, value):
-        
         return await self.setSensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH, value)
