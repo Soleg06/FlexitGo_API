@@ -180,7 +180,15 @@ class FlexitGo:
             return True
 
     def _ventilation_mode(self, ventilation_int):
-        mode = {0: "Null", 1: "OFF", 2: "AWAY", 3: "HOME", 4: "HIGH", 5: "COOKER_HOOD", 6: "FIREPLACE", 7: "HIGH_DELAYED"}
+        mode = {0: "Null",
+                1: "OFF",
+                2: "AWAY",
+                3: "HOME",
+                4: "HIGH",
+                5: "COOKER_HOOD",
+                6: "FIREPLACE",
+                7: "HIGH_DELAYED"
+                }
         return mode.get(ventilation_int, f"Unknown mode: {str(ventilation_int)}")
 
     def _to_efficiency(self, tilluft, uteluft, frånluft):
@@ -243,15 +251,15 @@ class FlexitGo:
 
             # pprint(self.deviceData)
 
-            out["fw"] = await self._str_device(self.FIRMWARE_REVISION_PATH)
-            out["modelName"] = await self._str_device(self.MODEL_NAME_PATH)
-            out["modelInfo"] = await self._str_device(self.MODEL_INFORMATION_PATH)
-            out["serialInfo"] = await self._str_device(self.SERIAL_NUMBER_PATH)
-            out["systemStatus"] = await self._str_device(self.SYSTEM_STATUS_PATH)
-            out["status"] = await self._str_device(self.OFFLINE_ONLINE_PATH)
-            out["deviceDescription"] = await self._str_device(self.DEVICE_DESCRIPTION_PATH)
-            out["applicationSoftwareVersion"] = await self._str_device(self.APPLICATION_SOFTWARE_VERSION_PATH)
-            out["lastRestartReason"] = await self._int_device(self.LAST_RESTART_REASON_PATH)
+            out["fw"] = self._str_device(self.FIRMWARE_REVISION_PATH)
+            out["modelName"] = self._str_device(self.MODEL_NAME_PATH)
+            out["modelInfo"] = self._str_device(self.MODEL_INFORMATION_PATH)
+            out["serialInfo"] = self._str_device(self.SERIAL_NUMBER_PATH)
+            out["systemStatus"] = self._str_device(self.SYSTEM_STATUS_PATH)
+            out["status"] = self._str_device(self.OFFLINE_ONLINE_PATH)
+            out["deviceDescription"] = self._str_device(self.DEVICE_DESCRIPTION_PATH)
+            out["applicationSoftwareVersion"] = self._str_device(self.APPLICATION_SOFTWARE_VERSION_PATH)
+            out["lastRestartReason"] = self._int_device(self.LAST_RESTART_REASON_PATH)
 
         except Exception as e:
             print(e)
@@ -264,50 +272,46 @@ class FlexitGo:
         # url1 = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
         paramlist = self._create_url_from_paths2(self.SENSOR_DATA_PATH_LIST)
         param = {"filterId": ujson.dumps(paramlist, separators=(",", ":"))}
+        now = arrow.now("Europe/Stockholm")
 
         try:
             self.sensorData = await self._doRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
-            # async with self.session.get(self.VALUES_PATH, headers=self.headers, params=param) as response:
-            #    self.sensorData = await response.json()
 
-            # pprint(self.sensorData)
-
-            out["temps"] = {}
-            out["fläkt"] = {}
-            out["filter"] = {}
-            out["alarm"] = {}
-            out["modes"] = {}
-
-            out["temps"]["home_air_temperature"] = self._float_sensor(self.HOME_AIR_TEMPERATURE_PATH)
-            out["temps"]["away_air_temperature"] = self._float_sensor(self.AWAY_AIR_TEMPERATURE_PATH)
-            out["temps"]["Uteluft"] = self._float_sensor(self.OUTSIDE_AIR_TEMPERATURE_PATH)
-            out["temps"]["Tilluft"] = self._float_sensor(self.SUPPLY_AIR_TEMPERATURE_PATH)
-            out["temps"]["Avluft"] = self._float_sensor(self.EXHAUST_AIR_TEMPERATURE_PATH)
-            out["temps"]["Frånluft"] = self._float_sensor(self.EXTRACT_AIR_TEMPERATURE_PATH)
-            out["temps"]["room_temperature"] = self._float_sensor(self.ROOM_TEMPERATURE_PATH)
-            out["modes"]["electric_heater"] = self._bool_sensor(self.HEATER_PATH)
-            out["modes"]["ventilation_mode"] = self._ventilation_mode(self._int_sensor(self.MODE_PATH))
-            out["modes"]["ventilation_mode_cal"] = self._ventilation_mode(self._int_sensor(self.MODE_HOME_HIGH_CAL_PUT_PATH))
-            out["modes"]["heat_exchanger_speed"] = self._int_sensor(self.HEAT_EXCHANGER_SPEED_PATH)
-            out["fläkt"]["supply_fan_speed"] = self._int_sensor(self.SUPPLY_FAN_SPEED_PATH)
-            out["fläkt"]["supply_fan_control_signal"] = self._float_sensor(self.SUPPLY_FAN_CONTROL_SIGNAL_PATH)
-            out["fläkt"]["extract_fan_speed"] = self._int_sensor(self.EXTRACT_FAN_SPEED_PATH)
-            out["fläkt"]["extract_fan_control_signal"] = self._float_sensor(self.EXTRACT_FAN_CONTROL_SIGNAL_PATH)
-            out["modes"]["additional_heater"] = self._bool_sensor(self.ADDITIONAL_HEATER_PATH)
-            out["alarm"]["alarm_code_a"] = self._int_sensor(self.ALARM_CODE_A_PATH)
-            out["alarm"]["alarm_code_b"] = self._int_sensor(self.ALARM_CODE_B_PATH)
-            out["modes"]["calendar_temporary_override"] = self._bool_sensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH)
-            out["modes"]["calendar_active"] = self._calendar_active(self.MODE_HOME_HIGH_CAL_PUT_PATH)
-            out["modes"]["boost_duration"] = self._int_sensor(self.BOOST_DURATION_PATH)
-            out["modes"]["away_delay"] = self._int_sensor(self.AWAY_DELAY_PATH)
-            out["modes"]["fireplace_duration"] = self._int_sensor(self.FIREPLACE_DURATION_PATH)
-
-            out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"])
+            out["temps"] = {"home_air_temperature": self._float_sensor(self.HOME_AIR_TEMPERATURE_PATH),
+                            "away_air_temperature": self._float_sensor(self.AWAY_AIR_TEMPERATURE_PATH),
+                            "Uteluft": self._float_sensor(self.OUTSIDE_AIR_TEMPERATURE_PATH),
+                            "Tilluft": self._float_sensor(self.SUPPLY_AIR_TEMPERATURE_PATH),
+                            "Avluft": self._float_sensor(self.EXHAUST_AIR_TEMPERATURE_PATH),
+                            "Frånluft": self._float_sensor(self.EXTRACT_AIR_TEMPERATURE_PATH),
+                            "room_temperature": self._float_sensor(self.ROOM_TEMPERATURE_PATH)
+                            }
+            out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"]),
             out["temps"]["verkningsgrad_frånluft"] = self._from_efficiency(out["temps"]["Uteluft"], out["temps"]["Frånluft"], out["temps"]["Avluft"])
 
-            now = arrow.now("Europe/Stockholm")
-            out["filter"]["filter_exchanged"] = now.shift(hours=-self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
-            out["filter"]["filter_time_for_exchange"] = now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH) - self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")
+            out["modes"] = {"electric_heater": self._bool_sensor(self.HEATER_PATH),
+                            "ventilation_mode": self._ventilation_mode(self._int_sensor(self.MODE_PATH)),
+                            "ventilation_mode_cal": self._ventilation_mode(self._int_sensor(self.MODE_HOME_HIGH_CAL_PUT_PATH)),
+                            "heat_exchanger_speed": self._int_sensor(self.HEAT_EXCHANGER_SPEED_PATH),
+                            "additional_heater": self._bool_sensor(self.ADDITIONAL_HEATER_PATH),
+                            "calendar_temporary_override": self._bool_sensor(self.CALENDAR_TEMPORARY_OVERRIDE_PATH),
+                            "calendar_active": self._calendar_active(self.MODE_HOME_HIGH_CAL_PUT_PATH),
+                            "boost_duration": self._int_sensor(self.BOOST_DURATION_PATH),
+                            "away_delay": self._int_sensor(self.AWAY_DELAY_PATH),
+                            "fireplace_duration": self._int_sensor(self.FIREPLACE_DURATION_PATH)
+                            }
+
+            out["fläkt"] = {"supply_fan_speed": self._int_sensor(self.SUPPLY_FAN_SPEED_PATH),
+                            "supply_fan_control_signal": self._float_sensor(self.SUPPLY_FAN_CONTROL_SIGNAL_PATH),
+                            "extract_fan_speed": self._int_sensor(self.EXTRACT_FAN_SPEED_PATH),
+                            "extract_fan_control_signal": self._float_sensor(self.EXTRACT_FAN_CONTROL_SIGNAL_PATH)}
+
+            out["alarm"] = {"alarm_code_a": self._int_sensor(self.ALARM_CODE_A_PATH),
+                            "alarm_code_b": self._int_sensor(self.ALARM_CODE_B_PATH)
+                            }
+
+            out["filter"] = {"filter_exchanged": now.shift(hours=-self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD"),
+                             "filter_time_for_exchange": now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH) - self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD"),
+                             }
             out["filter"]["dirty_filter"] = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
 
         except Exception as e:
@@ -350,11 +354,11 @@ class FlexitGo:
         result = list()
 
         if currentMode == presetMode:
-            return False
+            return None
 
         # Toggle modes that requires toggle
         toggleChange = {"AWAY": "AWAY_DELAYED",
-        "HIGH_ONTIMER": "HIGH_ONTIMER", "FIREPLACE": "FIREPLACE"}
+                        "HIGH_ONTIMER": "HIGH_ONTIMER", "FIREPLACE": "FIREPLACE"}
         if currentMode in toggleChange:
             result.append(await self._setMode(toggleChange[currentMode]))
             print(f"switching från {currentMode} to {toggleChange[currentMode]}")
@@ -363,7 +367,6 @@ class FlexitGo:
         print(f"switching mode to {presetMode}")
 
         return all(result)
-
 
     async def _setMode(self, mode):
         if mode == "AWAY":
