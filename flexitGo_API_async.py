@@ -11,7 +11,7 @@ import ujson
 
 
 class FlexitGo:
-    def __init__(self):
+    def __init__(self, username, password):
         # Put paths
         self.MODE_AWAY_PUT_PATH = ";1!005000032000055"
         self.MODE_HOME_HIGH_CAL_PUT_PATH = ";1!01300002A000055"
@@ -118,6 +118,11 @@ class FlexitGo:
             "Host": "api.climatixic.com",
         }
         self.session = aiohttp.ClientSession(base_url=self.API_URL)
+        self.username = username
+        self.password = password
+        self.tokenValidTo = arrow.now("Europe/Stockholm")
+        self.RETRIES = 3
+        self.RETRY_DELAY = 10  # seconds
 
     async def _doRequest(self, method, url, headers, data=None, params=None):
         async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
@@ -200,29 +205,31 @@ class FlexitGo:
     async def _validateToken(self):
         now = arrow.now("Europe/Stockholm")
         if now >= self.tokenValidTo.shift(hours=-1):
-            print("Token about to expire loggin in again")
-            await self.login(self.username, self.password)
+            print("FlexitGo token about to expire logging in again")
+            await self.login()
 
-    async def login(self, user, password):
-        # self.session = aiohttp.ClientSession()
-        self.username = user
-        self.password = password
-
+    async def login(self):
         data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
+        for i in range(self.RETRIES):
+            try:
+                out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
+                # async with self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data) as response:
+                #    out = await response.json()
+                access_token = f"Bearer {out['access_token']}"
+                self.headers["Authorization"] = access_token
+                fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
+                self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
+                await self.getPlant()
+                return out
 
-        try:
-            out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
-            # async with self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data) as response:
-            #    out = await response.json()
-            access_token = f"Bearer {out['access_token']}"
-            self.headers["Authorization"] = access_token
-            fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
-            self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
-            await self.getPlant()
-            return out
+            except (aiohttp.ClientError) as e:
+                print(f"Flexitgo login error: {str(e)}")
+                if i < self.RETRIES - 1:
+                    print(f"Flexitgo retrying login in {self.RETRY_DELAY} seconds...")
+                    await asyncio.sleep(self.RETRY_DELAY)
 
-        except Exception as e:
-            print(e)
+        print(f"Unable to login Flexitgo after {self.RETRIES} retries.")
+        return None
 
     async def getPlant(self):
         out = {}
@@ -285,7 +292,7 @@ class FlexitGo:
                             "Frånluft": self._float_sensor(self.EXTRACT_AIR_TEMPERATURE_PATH),
                             "room_temperature": self._float_sensor(self.ROOM_TEMPERATURE_PATH)
                             }
-            out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"]),
+            out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"])
             out["temps"]["verkningsgrad_frånluft"] = self._from_efficiency(out["temps"]["Uteluft"], out["temps"]["Frånluft"], out["temps"]["Avluft"])
 
             out["modes"] = {"electric_heater": self._bool_sensor(self.HEATER_PATH),
