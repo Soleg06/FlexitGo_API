@@ -3,111 +3,111 @@
 
 import asyncio
 import urllib.parse
-from pprint import pprint
 
 import aiohttp
 import arrow
+import structlog
 import ujson
 
 
 class FlexitGo:
+    
+    # Put paths
+    MODE_AWAY_PUT_PATH = ";1!005000032000055"
+    MODE_HOME_HIGH_CAL_PUT_PATH = ";1!01300002A000055"
+    MODE_HIGH_TEMP_PUT_PATH = ";1!013000165000055"  # TOGGLES
+    MODE_FIREPLACE_PUT_PATH = ";1!013000168000055"  # TOGGLES
+
+    FIREPLACE_DURATION_PATH = ";1!03000010E000055"  # PUT AND GET
+    BOOST_DURATION_PATH = ";1!030000125000055"  # PUT AND GET
+    AWAY_DELAY_PATH = ";1!03000013E000055"  # PUT AND GET
+    CALENDAR_TEMPORARY_OVERRIDE_PATH = ";1!0050001DA000055"  # PUT AND GET
+
+    # Paths
+    HOME_AIR_TEMPERATURE_PATH = ";1!0020007CA000055"
+    AWAY_AIR_TEMPERATURE_PATH = ";1!0020007C1000055"
+    ROOM_TEMPERATURE_PATH = ";1!00000004B000055"
+    CURRENT_FIREPLACE_DURATION_PATH = ";1!0020007F6000055"
+    CURRENT_BOOST_DURATION_PATH = ";1!0020007EF000055"
+
+    # Null*Off*Away*Home*High*Cocker hood*Fire place*Forced ventilation
+    MODE_PATH = ";1!013000169000055"  # Null*Off*Away*Home*High*Cocker hood*Fire place*Forced ventilation
+    OUTSIDE_AIR_TEMPERATURE_PATH = ";1!000000001000055"  # Uteluft
+    SUPPLY_AIR_TEMPERATURE_PATH = ";1!000000004000055"  # Tilluft
+    EXTRACT_AIR_TEMPERATURE_PATH = ";1!00000003B000055"  # Avtrekk
+    EXHAUST_AIR_TEMPERATURE_PATH = ";1!00000000B000055"  # Avkast
+    HEATER_PATH = ";1!0050001BD000055"
+    FILTER_OPERATING_TIME_PATH = ";1!00200011D000055"
+    FILTER_TIME_FOR_EXCHANGE_PATH = ";1!00200011E000055"
+    ALARM_CODE_A_PATH = ";1!002000008000055"
+    ALARM_CODE_B_PATH = ";1!002000082000055"
+
+    HEAT_EXCHANGER_SPEED_PATH = ";1!001000000000055"
+    SUPPLY_FAN_SPEED_PATH = ";1!000000005000055"
+    SUPPLY_FAN_CONTROL_SIGNAL_PATH = ";1!001000003000055"
+    EXTRACT_FAN_SPEED_PATH = ";1!00000000C000055"
+    EXTRACT_FAN_CONTROL_SIGNAL_PATH = ";1!001000004000055"
+    ADDITIONAL_HEATER_PATH = ";1!00100001D000055"
+
+    OFFLINE_ONLINE_PATH = ";0!Online"
+    LAST_RESTART_REASON_PATH = ";0!0083FFFFF0000C4"
+    SYSTEM_STATUS_PATH = ";0!0083FFFFF000070"
+
+    APPLICATION_SOFTWARE_VERSION_PATH = ";0!0083FFFFF00000C"
+    DEVICE_DESCRIPTION_PATH = ";0!0083FFFFF00001C"
+    MODEL_NAME_PATH = ";0!0083FFFFF000046"
+    MODEL_INFORMATION_PATH = ";0!0083FFFFF0012DB"
+    SERIAL_NUMBER_PATH = ";0!0083FFFFF0013EC"
+    FIRMWARE_REVISION_PATH = ";0!0083FFFFF00002C"
+    BACNET_MAC_PATH = ";0!108000000001313"
+    DEVICE_FEATURES_PATH = ";0!0083FFFFF0013F4"
+
+    SENSOR_DATA_PATH_LIST = [MODE_PATH,
+                             MODE_HOME_HIGH_CAL_PUT_PATH,
+                             OUTSIDE_AIR_TEMPERATURE_PATH,
+                             SUPPLY_AIR_TEMPERATURE_PATH,
+                             EXTRACT_AIR_TEMPERATURE_PATH,
+                             EXHAUST_AIR_TEMPERATURE_PATH,
+                             HOME_AIR_TEMPERATURE_PATH,
+                             AWAY_AIR_TEMPERATURE_PATH,
+                             ROOM_TEMPERATURE_PATH,
+                             FILTER_OPERATING_TIME_PATH,
+                             FILTER_TIME_FOR_EXCHANGE_PATH,
+                             HEATER_PATH,
+                             HEAT_EXCHANGER_SPEED_PATH,
+                             SUPPLY_FAN_SPEED_PATH,
+                             SUPPLY_FAN_CONTROL_SIGNAL_PATH,
+                             EXTRACT_FAN_SPEED_PATH,
+                             EXTRACT_FAN_CONTROL_SIGNAL_PATH,
+                             ADDITIONAL_HEATER_PATH,
+                             ALARM_CODE_A_PATH,
+                             ALARM_CODE_B_PATH,
+                             BOOST_DURATION_PATH,
+                             FIREPLACE_DURATION_PATH,
+                             AWAY_DELAY_PATH,
+                             CALENDAR_TEMPORARY_OVERRIDE_PATH]
+
+    DEVICE_INFO_PATH_LIST = [APPLICATION_SOFTWARE_VERSION_PATH,
+                             DEVICE_DESCRIPTION_PATH,
+                             MODEL_NAME_PATH,
+                             MODEL_INFORMATION_PATH,
+                             SERIAL_NUMBER_PATH,
+                             FIRMWARE_REVISION_PATH,
+                             OFFLINE_ONLINE_PATH,
+                             SYSTEM_STATUS_PATH,
+                             LAST_RESTART_REASON_PATH]
+
+    API_URL = "https://api.climatixic.com"
+    TOKEN_PATH = "/Token"
+    PLANTS_PATH = "/Plants"
+    DATAPOINTS_PATH = "/DataPoints"
+    # FILTER_PATH = f"{DATAPOINTS_PATH}/Values?filterId="
+    VALUES_PATH = f"{DATAPOINTS_PATH}/Values"
+
+    log = structlog.get_logger(__name__)
+        
     def __init__(self, username, password):
-        # Put paths
-        self.MODE_AWAY_PUT_PATH = ";1!005000032000055"
-        self.MODE_HOME_HIGH_CAL_PUT_PATH = ";1!01300002A000055"
-        self.MODE_HIGH_TEMP_PUT_PATH = ";1!013000165000055"  # TOGGLES
-        self.MODE_FIREPLACE_PUT_PATH = ";1!013000168000055"  # TOGGLES
-
-        self.FIREPLACE_DURATION_PATH = ";1!03000010E000055"  # PUT AND GET
-        self.BOOST_DURATION_PATH = ";1!030000125000055"  # PUT AND GET
-        self.AWAY_DELAY_PATH = ";1!03000013E000055"  # PUT AND GET
-        self.CALENDAR_TEMPORARY_OVERRIDE_PATH = ";1!0050001DA000055"  # PUT AND GET
-
-        # Paths
-        self.HOME_AIR_TEMPERATURE_PATH = ";1!0020007CA000055"
-        self.AWAY_AIR_TEMPERATURE_PATH = ";1!0020007C1000055"
-        self.ROOM_TEMPERATURE_PATH = ";1!00000004B000055"
-        self.CURRENT_FIREPLACE_DURATION_PATH = ";1!0020007F6000055"
-        self.CURRENT_BOOST_DURATION_PATH = ";1!0020007EF000055"
-
-        # Null*Off*Away*Home*High*Cocker hood*Fire place*Forced ventilation
-        self.MODE_PATH = ";1!013000169000055"  # Null*Off*Away*Home*High*Cocker hood*Fire place*Forced ventilation
-        self.OUTSIDE_AIR_TEMPERATURE_PATH = ";1!000000001000055"  # Uteluft
-        self.SUPPLY_AIR_TEMPERATURE_PATH = ";1!000000004000055"  # Tilluft
-        self.EXTRACT_AIR_TEMPERATURE_PATH = ";1!00000003B000055"  # Avtrekk
-        self.EXHAUST_AIR_TEMPERATURE_PATH = ";1!00000000B000055"  # Avkast
-        self.HEATER_PATH = ";1!0050001BD000055"
-        self.FILTER_OPERATING_TIME_PATH = ";1!00200011D000055"
-        self.FILTER_TIME_FOR_EXCHANGE_PATH = ";1!00200011E000055"
-        self.ALARM_CODE_A_PATH = ";1!002000008000055"
-        self.ALARM_CODE_B_PATH = ";1!002000082000055"
-
-        self.HEAT_EXCHANGER_SPEED_PATH = ";1!001000000000055"
-        self.SUPPLY_FAN_SPEED_PATH = ";1!000000005000055"
-        self.SUPPLY_FAN_CONTROL_SIGNAL_PATH = ";1!001000003000055"
-        self.EXTRACT_FAN_SPEED_PATH = ";1!00000000C000055"
-        self.EXTRACT_FAN_CONTROL_SIGNAL_PATH = ";1!001000004000055"
-        self.ADDITIONAL_HEATER_PATH = ";1!00100001D000055"
-
-        self.OFFLINE_ONLINE_PATH = ";0!Online"
-        self.LAST_RESTART_REASON_PATH = ";0!0083FFFFF0000C4"
-        self.SYSTEM_STATUS_PATH = ";0!0083FFFFF000070"
-
-        self.APPLICATION_SOFTWARE_VERSION_PATH = ";0!0083FFFFF00000C"
-        self.DEVICE_DESCRIPTION_PATH = ";0!0083FFFFF00001C"
-        self.MODEL_NAME_PATH = ";0!0083FFFFF000046"
-        self.MODEL_INFORMATION_PATH = ";0!0083FFFFF0012DB"
-        self.SERIAL_NUMBER_PATH = ";0!0083FFFFF0013EC"
-        self.FIRMWARE_REVISION_PATH = ";0!0083FFFFF00002C"
-        self.BACNET_MAC_PATH = ";0!108000000001313"
-        self.DEVICE_FEATURES_PATH = ";0!0083FFFFF0013F4"
-
-        self.SENSOR_DATA_PATH_LIST = [
-            self.MODE_PATH,
-            self.MODE_HOME_HIGH_CAL_PUT_PATH,
-            self.OUTSIDE_AIR_TEMPERATURE_PATH,
-            self.SUPPLY_AIR_TEMPERATURE_PATH,
-            self.EXTRACT_AIR_TEMPERATURE_PATH,
-            self.EXHAUST_AIR_TEMPERATURE_PATH,
-            self.HOME_AIR_TEMPERATURE_PATH,
-            self.AWAY_AIR_TEMPERATURE_PATH,
-            self.ROOM_TEMPERATURE_PATH,
-            self.FILTER_OPERATING_TIME_PATH,
-            self.FILTER_TIME_FOR_EXCHANGE_PATH,
-            self.HEATER_PATH,
-            self.HEAT_EXCHANGER_SPEED_PATH,
-            self.SUPPLY_FAN_SPEED_PATH,
-            self.SUPPLY_FAN_CONTROL_SIGNAL_PATH,
-            self.EXTRACT_FAN_SPEED_PATH,
-            self.EXTRACT_FAN_CONTROL_SIGNAL_PATH,
-            self.ADDITIONAL_HEATER_PATH,
-            self.ALARM_CODE_A_PATH,
-            self.ALARM_CODE_B_PATH,
-            self.BOOST_DURATION_PATH,
-            self.FIREPLACE_DURATION_PATH,
-            self.AWAY_DELAY_PATH,
-            self.CALENDAR_TEMPORARY_OVERRIDE_PATH,
-        ]
-
-        self.DEVICE_INFO_PATH_LIST = [
-            self.APPLICATION_SOFTWARE_VERSION_PATH,
-            self.DEVICE_DESCRIPTION_PATH,
-            self.MODEL_NAME_PATH,
-            self.MODEL_INFORMATION_PATH,
-            self.SERIAL_NUMBER_PATH,
-            self.FIRMWARE_REVISION_PATH,
-            self.OFFLINE_ONLINE_PATH,
-            self.SYSTEM_STATUS_PATH,
-            self.LAST_RESTART_REASON_PATH,
-        ]
-
-        self.API_URL = "https://api.climatixic.com"
-        self.TOKEN_PATH = "/Token"
-        self.PLANTS_PATH = "/Plants"
-        self.DATAPOINTS_PATH = "/DataPoints"
-        # self.FILTER_PATH = f"{self.DATAPOINTS_PATH}/Values?filterId="
-        self.VALUES_PATH = f"{self.DATAPOINTS_PATH}/Values"
-
+       
         self.headers = {
             "Accept": "application/json",
             "Accept-Encoding": "gzip, deflate, br",
@@ -205,7 +205,7 @@ class FlexitGo:
     async def _validateToken(self):
         now = arrow.now("Europe/Stockholm")
         if now >= self.tokenValidTo.shift(hours=-1):
-            print("FlexitGo token about to expire logging in again")
+            self.log.info("FlexitGo token about to expire logging in again", tokenValidTo=self.tokenValidTo)
             await self.login()
 
     async def login(self):
@@ -223,12 +223,12 @@ class FlexitGo:
                 return out
 
             except (aiohttp.ClientError) as e:
-                print(f"Flexitgo login error: {str(e)}")
+                self.log.error("Flexitgo login error", error=e)
                 if i < self.RETRIES - 1:
-                    print(f"Flexitgo retrying login in {self.RETRY_DELAY} seconds...")
+                    self.log.info(f"Flexitgo retrying login in {self.RETRY_DELAY} seconds...")
                     await asyncio.sleep(self.RETRY_DELAY)
 
-        print(f"Unable to login Flexitgo after {self.RETRIES} retries.")
+        self.log.error(f"Unable to login Flexitgo after {self.RETRIES} retries.")
         return None
 
     async def getPlant(self):
@@ -241,7 +241,7 @@ class FlexitGo:
                 self.plantId = d["id"]
 
         except Exception as e:
-            print(e)
+            self.log.error("Exception in getPlant",  error=e, out=out)
 
         return out
 
@@ -269,7 +269,7 @@ class FlexitGo:
             out["lastRestartReason"] = self._int_device(self.LAST_RESTART_REASON_PATH)
 
         except Exception as e:
-            print(e)
+            self.log.error("Exception in getDevice",  error=e, out=out)
 
         return out
 
@@ -322,7 +322,7 @@ class FlexitGo:
             out["filter"]["dirty_filter"] = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
 
         except Exception as e:
-            print(e)
+            self.log.error("Exception in getSensors",  error=e, out=out)
 
         return out
 
@@ -340,7 +340,7 @@ class FlexitGo:
             return out["stateTexts"][self._path(path)] == "Success"
 
         except Exception as e:
-            print(e)
+            self.log.error("Exception in setSensor",  error=e, out=out)
             return False
 
     async def setHomeTemp(self, temp):
@@ -353,7 +353,7 @@ class FlexitGo:
         acceptedModes = ["HOME", "AWAY", "AWAY_DELAYED", "HIGH", "HIGH_ONTIMER", "FIREPLACE"]
 
         if presetMode not in acceptedModes:
-            print(f"{presetMode} are not a valid  mode!")
+            self.log.warning(f"{presetMode} are not a valid  mode!")
             return False
 
         currentMode = await self.getSensors()
@@ -365,7 +365,8 @@ class FlexitGo:
 
         # Toggle modes that requires toggle
         toggleChange = {"AWAY": "AWAY_DELAYED",
-                        "HIGH_ONTIMER": "HIGH_ONTIMER", "FIREPLACE": "FIREPLACE"}
+                        "HIGH_ONTIMER": "HIGH_ONTIMER",
+                        "FIREPLACE": "FIREPLACE"}
         if currentMode in toggleChange:
             result.append(await self._setMode(toggleChange[currentMode]))
             print(f"switching från {currentMode} to {toggleChange[currentMode]}")
