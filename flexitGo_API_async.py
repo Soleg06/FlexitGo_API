@@ -11,7 +11,7 @@ import ujson
 
 
 class FlexitGo:
-    
+
     # Put paths
     MODE_AWAY_PUT_PATH = ";1!005000032000055"
     MODE_HOME_HIGH_CAL_PUT_PATH = ";1!01300002A000055"
@@ -105,9 +105,9 @@ class FlexitGo:
     VALUES_PATH = f"{DATAPOINTS_PATH}/Values"
 
     log = structlog.get_logger(__name__)
-        
+
     def __init__(self, username, password):
-       
+
         self.headers = {
             "Accept": "application/json",
             "Accept-Encoding": "gzip, deflate, br",
@@ -125,9 +125,17 @@ class FlexitGo:
         self.RETRY_DELAY = 10  # seconds
 
     async def _doRequest(self, method, url, headers, data=None, params=None):
-        async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
-            jsonResponse = await response.json()
-            return jsonResponse
+        try:
+            async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
+                jsonResponse = await response.json()
+                return jsonResponse
+
+        except aiohttp.ClientConnectorError as e:
+            self.log.error("Exception in _doSession Failed to connect to host", error=e)
+            pass
+
+        except Exception as e:
+            self.log.error("Exception in _doSession",  error=e, response=jsonResponse)
 
     def _path(self, path):
         return f"{self.plantId}{path}"
@@ -321,6 +329,8 @@ class FlexitGo:
                              }
             out["filter"]["dirty_filter"] = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
 
+            out["timestamp"] = now.format("YYYY-MM-DD HH:mm:ss")
+            
         except Exception as e:
             self.log.error("Exception in getSensors",  error=e, out=out)
 
@@ -369,10 +379,12 @@ class FlexitGo:
                         "FIREPLACE": "FIREPLACE"}
         if currentMode in toggleChange:
             result.append(await self._setMode(toggleChange[currentMode]))
-            print(f"switching från {currentMode} to {toggleChange[currentMode]}")
+            #print(f"Flexitgo switching från {currentMode} to {toggleChange[currentMode]}")
+            self.log.info(f"Flexitgo switching från {currentMode} to {toggleChange[currentMode]}")
 
         result.append(await self._setMode(presetMode))
-        print(f"switching mode to {presetMode}")
+        #print(f"Flexitgo switching mode to {presetMode}")
+        self.log.info(f"Flexitgo switching mode to {presetMode}")
 
         return all(result)
 
