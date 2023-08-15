@@ -120,7 +120,7 @@ class FlexitGo:
         self.session = aiohttp.ClientSession(base_url=self.API_URL)
         self.username = username
         self.password = password
-        self.tokenValidTo = arrow.now("Europe/Stockholm")
+        self.tokenValidTo = None
         self.RETRIES = 3
         self.RETRY_DELAY = 10  # seconds
 
@@ -211,12 +211,17 @@ class FlexitGo:
         return round(((frånluft - avluft) / (frånluft - uteluft)) * 100, 1)
 
     async def _validateToken(self):
-        now = arrow.now("Europe/Stockholm")
-        if now >= self.tokenValidTo.shift(hours=-1):
-            self.log.info("FlexitGo token about to expire logging in again", tokenValidTo=self.tokenValidTo)
+        if self.tokenValidTo is not None:
+            now = arrow.now("Europe/Stockholm")
+            if now >= self.tokenValidTo.shift(hours=-1):
+                self.log.info("FlexitGo token about to expire logging in again", tokenValidTo=self.tokenValidTo)
+                await self.login()
+        else:
+            self.log.warning("validateToken cant work without a valid tokenValidTo", tokenValidTo=self.tokenValidTo)
             await self.login()
 
     async def login(self):
+        self.log.info("trying login")
         data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
         for i in range(self.RETRIES):
             try:
@@ -330,7 +335,7 @@ class FlexitGo:
             out["filter"]["dirty_filter"] = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
 
             out["timestamp"] = now.format("YYYY-MM-DD HH:mm:ss")
-            
+
         except Exception as e:
             self.log.error("Exception in getSensors",  error=e, out=out)
 
@@ -379,11 +384,11 @@ class FlexitGo:
                         "FIREPLACE": "FIREPLACE"}
         if currentMode in toggleChange:
             result.append(await self._setMode(toggleChange[currentMode]))
-            #print(f"Flexitgo switching från {currentMode} to {toggleChange[currentMode]}")
+            # print(f"Flexitgo switching från {currentMode} to {toggleChange[currentMode]}")
             self.log.info(f"Flexitgo switching från {currentMode} to {toggleChange[currentMode]}")
 
         result.append(await self._setMode(presetMode))
-        #print(f"Flexitgo switching mode to {presetMode}")
+        # print(f"Flexitgo switching mode to {presetMode}")
         self.log.info(f"Flexitgo switching mode to {presetMode}")
 
         return all(result)
