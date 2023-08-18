@@ -105,6 +105,8 @@ class FlexitGo:
     VALUES_PATH = f"{DATAPOINTS_PATH}/Values"
 
     log = structlog.get_logger(__name__)
+    doSessionSemaphore = asyncio.Semaphore(1)
+    
 
     def __init__(self, username, password):
 
@@ -125,17 +127,18 @@ class FlexitGo:
         self.RETRY_DELAY = 10  # seconds
 
     async def _doRequest(self, method, url, headers, data=None, params=None):
-        try:
-            async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
-                jsonResponse = await response.json()
-                return jsonResponse
+        async with FlexitGo.doSessionSemaphore:
+            try:
+                async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
+                    jsonResponse = await response.json()
+                    return jsonResponse
 
-        except aiohttp.ClientConnectorError as e:
-            self.log.error("Exception in _doSession Failed to connect to host", error=e)
-            pass
+            except aiohttp.ClientConnectorError as e:
+                self.log.error("Exception in _doSession Failed to connect to host", error=e)
+                pass
 
-        except Exception as e:
-            self.log.error("Exception in _doSession",  error=e, response=jsonResponse)
+            except Exception as e:
+                self.log.error("Exception in _doSession",  error=e, response=jsonResponse)
 
     def _path(self, path):
         return f"{self.plantId}{path}"
