@@ -106,7 +106,8 @@ class FlexitGo:
 
     log = structlog.get_logger(__name__)
     doSessionSemaphore = asyncio.Semaphore(1)
-    
+    RETRIES = 3
+    RETRY_DELAY = 10  # seconds
 
     def __init__(self, username, password):
 
@@ -123,22 +124,26 @@ class FlexitGo:
         self.username = username
         self.password = password
         self.tokenValidTo = None
-        self.RETRIES = 3
-        self.RETRY_DELAY = 10  # seconds
 
     async def _doRequest(self, method, url, headers, data=None, params=None):
-        async with FlexitGo.doSessionSemaphore:
+        out = {}
+        for i in range(self.RETRIES):
             try:
-                async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
-                    jsonResponse = await response.json()
-                    return jsonResponse
+                async with FlexitGo.doSessionSemaphore:
+                    async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
+                        out = await response.json()
 
-            except aiohttp.ClientConnectorError as e:
-                self.log.error("Exception in _doSession Failed to connect to host", error=e)
-                pass
+                return out
 
             except Exception as e:
-                self.log.error("Exception in _doSession",  error=e, response=jsonResponse)
+                self.log.error("Exception in _doRequest", error=e)
+                if i < self.RETRIES - 1:
+                    self.log.warning(f"Retrying in {self.RETRY_DELAY} seconds...")
+                    await asyncio.sleep(self.RETRY_DELAY)
+                else:
+                    self.log.warning("Max retries reached. Attempting logon...")
+                    await self.login()
+                    i = -1
 
     def _path(self, path):
         return f"{self.plantId}{path}"
@@ -163,13 +168,13 @@ class FlexitGo:
         return f"{self.DATAPOINTS_PATH}/{urllib.parse.quote(path)}"
 
     def _str_device(self, path):
-        return self.deviceData["values"][f"{self.plantId}{path}"]["value"]
+        return self.deviceData["values"][f"{self.plantId}{path}"]['value']
 
     def _str_sensor(self, path):
-        return self.sensorData["values"][f"{self.plantId}{path}"]["value"]["value"]
+        return self.sensorData["values"][f"{self.plantId}{path}"]['value']['value']
 
     def _present_priority(self, path):
-        return self.sensorData["values"][f"{self.plantId}{path}"]["value"]["presentPriority"]
+        return self.sensorData["values"][f"{self.plantId}{path}"]['value']["presentPriority"]
 
     def _int_device(self, path):
         return int(self._str_device(path))
@@ -224,28 +229,27 @@ class FlexitGo:
             await self.login()
 
     async def login(self):
-        self.log.info("trying login")
-        data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
         for i in range(self.RETRIES):
             try:
+                self.log.info("trying login")
+                data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
                 out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
                 # async with self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data) as response:
                 #    out = await response.json()
+                if out["access_token"]:
+                    self.log.info("login success")
                 access_token = f"Bearer {out['access_token']}"
                 self.headers["Authorization"] = access_token
                 fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
                 self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
                 await self.getPlant()
-                return out
+                break
 
-            except (aiohttp.ClientError) as e:
-                self.log.error("Flexitgo login error", error=e)
+            except Exception as e:
+                self.log.error("Flexitgo exception in login",  error=e)
                 if i < self.RETRIES - 1:
                     self.log.info(f"Flexitgo retrying login in {self.RETRY_DELAY} seconds...")
                     await asyncio.sleep(self.RETRY_DELAY)
-
-        self.log.error(f"Unable to login Flexitgo after {self.RETRIES} retries.")
-        return None
 
     async def getPlant(self):
         out = {}
@@ -262,7 +266,6 @@ class FlexitGo:
         return out
 
     async def getDevice(self):
-        out = {}
         # url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
         paramlist = await self._create_url_from_paths2(self.DEVICE_INFO_PATH_LIST)
         param = {"filterId": ujson.dumps(paramlist, separators=(",", ":"))}
@@ -274,15 +277,15 @@ class FlexitGo:
 
             # pprint(self.deviceData)
 
-            out["fw"] = self._str_device(self.FIRMWARE_REVISION_PATH)
-            out["modelName"] = self._str_device(self.MODEL_NAME_PATH)
-            out["modelInfo"] = self._str_device(self.MODEL_INFORMATION_PATH)
-            out["serialInfo"] = self._str_device(self.SERIAL_NUMBER_PATH)
-            out["systemStatus"] = self._str_device(self.SYSTEM_STATUS_PATH)
-            out["status"] = self._str_device(self.OFFLINE_ONLINE_PATH)
-            out["deviceDescription"] = self._str_device(self.DEVICE_DESCRIPTION_PATH)
-            out["applicationSoftwareVersion"] = self._str_device(self.APPLICATION_SOFTWARE_VERSION_PATH)
-            out["lastRestartReason"] = self._int_device(self.LAST_RESTART_REASON_PATH)
+            out = {"fw": self._str_device(self.FIRMWARE_REVISION_PATH),
+                   "modelName": self._str_device(self.MODEL_NAME_PATH),
+                   "modelInfo": self._str_device(self.MODEL_INFORMATION_PATH),
+                   "serialInfo": self._str_device(self.SERIAL_NUMBER_PATH),
+                   "systemStatus": self._str_device(self.SYSTEM_STATUS_PATH),
+                   "status": self._str_device(self.OFFLINE_ONLINE_PATH),
+                   "deviceDescription": self._str_device(self.DEVICE_DESCRIPTION_PATH),
+                   "applicationSoftwareVersion": self._str_device(self.APPLICATION_SOFTWARE_VERSION_PATH),
+                   "lastRestartReason": self._int_device(self.LAST_RESTART_REASON_PATH)}
 
         except Exception as e:
             self.log.error("Exception in getDevice",  error=e, out=out)
@@ -306,8 +309,8 @@ class FlexitGo:
                             "Tilluft": self._float_sensor(self.SUPPLY_AIR_TEMPERATURE_PATH),
                             "Avluft": self._float_sensor(self.EXHAUST_AIR_TEMPERATURE_PATH),
                             "Frånluft": self._float_sensor(self.EXTRACT_AIR_TEMPERATURE_PATH),
-                            "room_temperature": self._float_sensor(self.ROOM_TEMPERATURE_PATH)
-                            }
+                            "room_temperature": self._float_sensor(self.ROOM_TEMPERATURE_PATH)}
+
             out["temps"]["verkningsgrad_tilluft"] = self._to_efficiency(out["temps"]["Tilluft"], out["temps"]["Uteluft"], out["temps"]["Frånluft"])
             out["temps"]["verkningsgrad_frånluft"] = self._from_efficiency(out["temps"]["Uteluft"], out["temps"]["Frånluft"], out["temps"]["Avluft"])
 
@@ -320,8 +323,7 @@ class FlexitGo:
                             "calendar_active": self._calendar_active(self.MODE_HOME_HIGH_CAL_PUT_PATH),
                             "boost_duration": self._int_sensor(self.BOOST_DURATION_PATH),
                             "away_delay": self._int_sensor(self.AWAY_DELAY_PATH),
-                            "fireplace_duration": self._int_sensor(self.FIREPLACE_DURATION_PATH)
-                            }
+                            "fireplace_duration": self._int_sensor(self.FIREPLACE_DURATION_PATH)}
 
             out["fläkt"] = {"supply_fan_speed": self._int_sensor(self.SUPPLY_FAN_SPEED_PATH),
                             "supply_fan_control_signal": self._float_sensor(self.SUPPLY_FAN_CONTROL_SIGNAL_PATH),
@@ -329,12 +331,10 @@ class FlexitGo:
                             "extract_fan_control_signal": self._float_sensor(self.EXTRACT_FAN_CONTROL_SIGNAL_PATH)}
 
             out["alarm"] = {"alarm_code_a": self._int_sensor(self.ALARM_CODE_A_PATH),
-                            "alarm_code_b": self._int_sensor(self.ALARM_CODE_B_PATH)
-                            }
+                            "alarm_code_b": self._int_sensor(self.ALARM_CODE_B_PATH)}
 
             out["filter"] = {"filter_exchanged": now.shift(hours=-self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD"),
-                             "filter_time_for_exchange": now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH) - self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD"),
-                             }
+                             "filter_time_for_exchange": now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH) - self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")}
             out["filter"]["dirty_filter"] = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
 
             out["timestamp"] = now.format("YYYY-MM-DD HH:mm:ss")

@@ -180,15 +180,15 @@ class FlexitGo:
 
 
     def _str_device(self, path):
-        return self.deviceData["values"][f"{self.plantId}{path}"]["value"]
+        return self.deviceData["values"][f"{self.plantId}{path}"]['value']
 
 
     def _str_sensor(self, path):
-        return self.sensorData["values"][f"{self.plantId}{path}"]["value"]["value"]
+        return self.sensorData["values"][f"{self.plantId}{path}"]['value']['value']
 
 
     def _present_priority(self, path):
-        return self.sensorData["values"][f"{self.plantId}{path}"]["value"]["presentPriority"]
+        return self.sensorData["values"][f"{self.plantId}{path}"]['value']["presentPriority"]
 
 
     def _int_device(self, path):
