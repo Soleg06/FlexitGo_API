@@ -106,7 +106,7 @@ class FlexitGo:
     VALUES_PATH = f"{DATAPOINTS_PATH}/Values"
 
     log = structlog.get_logger(__name__)
-    doSessionSemaphore = asyncio.Lock()
+    doSessionLock = asyncio.Lock()
     fileReadLock = asyncio.Lock()
     fileWriteLock = asyncio.Lock()
     RETRIES = 3
@@ -143,25 +143,25 @@ class FlexitGo:
             with open(filename, mode="w") as file:
                 ujson.dump(contents, file)
 
-    async def _doRequest(self, method, url, headers, data=None, params=None):
+    @classmethod
+    async def _doRequest(cls, method, url, headers, data=None, params=None):
         out = {}
-        for i in range(self.RETRIES):
-            try:
-                async with FlexitGo.doSessionSemaphore:
-                    async with self.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
+        async with FlexitGo.doSessionLock:
+            for i in range(cls.RETRIES):
+                try:
+                    async with cls.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
                         out = await response.json()
 
-                return out
+                    return out
 
-            except Exception as e:
-                self.log.error("Exception in _doRequest", error=e)
-                if i < self.RETRIES - 1:
-                    self.log.warning(f"Retrying in {self.RETRY_DELAY} seconds...")
-                    await asyncio.sleep(self.RETRY_DELAY)
-                else:
-                    self.log.warning("Max retries reached. Attempting logon...")
-                    await self.login()
-                    i = -1
+                except Exception as e:
+                    cls.log.error("Exception in _doRequest", error=e)
+                    if i < cls.RETRIES - 1:
+                        cls.log.warning(f"Retrying in {cls.RETRY_DELAY} seconds...")
+                        await asyncio.sleep(cls.RETRY_DELAY)
+                    else:
+                        cls.log.warning("Max retries reached. Attempting logon...")
+                        await clock_settime(clk_id, time).login()
 
     def _path(self, path):
         return f"{self.plantId}{path}"
