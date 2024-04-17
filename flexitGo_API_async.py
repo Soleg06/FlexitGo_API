@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import os
 import urllib.parse
 
 import aiohttp
@@ -105,25 +106,42 @@ class FlexitGo:
     VALUES_PATH = f"{DATAPOINTS_PATH}/Values"
 
     log = structlog.get_logger(__name__)
-    doSessionSemaphore = asyncio.Semaphore(1)
+    doSessionSemaphore = asyncio.Lock()
+    fileReadLock = asyncio.Lock()
+    fileWriteLock = asyncio.Lock()
     RETRIES = 3
     RETRY_DELAY = 10  # seconds
+    tokenValidTo = None
+    tokenFileName = "/home/staffan/olis/olis_flexit/tokenfile.txt"
+    tokenFileRead = False
+    session = aiohttp.ClientSession(base_url=API_URL)
+    headers = {
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "en-us",
+        "Content-Type": "application/json; charset=utf-8",
+        "User-Agent": "Flexit%20GO/2.0.6 CFNetwork/1128.0.1 Darwin/19.6.0",
+        "Ocp-Apim-Subscription-Key": "c3fc1f14ce8747588212eda5ae3b439e",
+        "Host": "api.climatixic.com",
+    }
 
     def __init__(self, username, password):
-
-        self.headers = {
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-us",
-            "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "Flexit%20GO/2.0.6 CFNetwork/1128.0.1 Darwin/19.6.0",
-            "Ocp-Apim-Subscription-Key": "c3fc1f14ce8747588212eda5ae3b439e",
-            "Host": "api.climatixic.com",
-        }
-        self.session = aiohttp.ClientSession(base_url=self.API_URL)
         self.username = username
         self.password = password
-        self.tokenValidTo = None
+
+    @classmethod
+    async def _readFileAsync(cls, filename):
+        async with cls.fileReadLock:
+            if os.path.exists(filename):
+                with open(filename, mode="r") as file:
+                    contents = ujson.load(file)
+                    return contents
+
+    @classmethod
+    async def _writeFileAsync(cls, filename, contents):
+        async with cls.fileWriteLock:
+            with open(filename, mode="w") as file:
+                ujson.dump(contents, file)
 
     async def _doRequest(self, method, url, headers, data=None, params=None):
         out = {}
@@ -218,30 +236,36 @@ class FlexitGo:
     def _from_efficiency(self, uteluft, frånluft, avluft):
         return round(((frånluft - avluft) / (frånluft - uteluft)) * 100, 1)
 
-    async def _validateToken(self):
-        if self.tokenValidTo is not None:
-            now = arrow.now("Europe/Stockholm")
-            if now >= self.tokenValidTo.shift(hours=-1):
-                self.log.info("FlexitGo token about to expire logging in again", tokenValidTo=self.tokenValidTo)
-                await self.login()
-        else:
-            self.log.warning("validateToken cant work without a valid tokenValidTo", tokenValidTo=self.tokenValidTo)
-            await self.login()
-
     async def login(self):
         for i in range(self.RETRIES):
             try:
-                self.log.info("trying login")
-                data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
-                out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
-                # async with self.session.post("https://api.climatixic.com/Token", headers=self.headers, data=data) as response:
-                #    out = await response.json()
-                if out["access_token"]:
-                    self.log.info("login success")
-                access_token = f"Bearer {out['access_token']}"
-                self.headers["Authorization"] = access_token
-                fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
-                self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
+                if not self.tokenFileRead:
+                    _tokenFromFile = await self._readFileAsync(self.tokenFileName)
+
+                if not self.tokenFileRead and _tokenFromFile:
+                    if "token" in _tokenFromFile:
+                        self.log.info("FlexitGo setting token from file")
+                        _token = _tokenFromFile.get("token")
+                        self.headers["Authorization"] = _token
+                        self.tokenValidTo = arrow.get(_tokenFromFile.get("tokenExpires"), tzinfo=("Europe/Stockholm"))
+                        self.tokenFileRead = True
+                        await self._validateToken()
+                    else:
+                        self.tokenFileRead = True
+                        self.log.warning("Melcloud token file damaged")
+                else:
+                    self.log.info("FlexitGo trying login")
+                    data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
+                    out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
+                    if out is not None and 'access_token' in out:
+                        _token = f"Bearer {out['access_token']}"
+                        self.headers["Authorization"] = _token
+                        fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
+                        self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
+                        await self._writeFileAsync(self.tokenFileName, {"token": _token, "tokenExpires": self.tokenValidTo.format("YYYY-MM-DD HH:mm:ss")})
+                        if _token:
+                            self.log.info("FlexitGo login success")
+
                 await self.getPlant()
                 break
 
@@ -250,6 +274,12 @@ class FlexitGo:
                 if i < self.RETRIES - 1:
                     self.log.info(f"Flexitgo retrying login in {self.RETRY_DELAY} seconds...")
                     await asyncio.sleep(self.RETRY_DELAY)
+
+    async def _validateToken(self):
+        now = arrow.now("Europe/Stockholm")
+        if now >= self.tokenValidTo:
+            self.log.info("Melcloud token expired, logging in again")
+            await self.login()
 
     async def getPlant(self):
         out = {}
