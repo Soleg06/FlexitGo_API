@@ -2,16 +2,22 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-import os
 import urllib.parse
 
-import aiohttp
 import arrow
 import structlog
 import ujson
 
+from API.apihandlers import APIFlexitgo
+
 
 class FlexitGo:
+    log = structlog.get_logger(__name__)
+    
+    TIME_ZONE = "Europe/Stockholm"
+    DATE_FORMAT = "YYYY-MM-DD HH:mm:ss"
+    fg = None
+    apiHandler = None
 
     # Put paths
     MODE_AWAY_PUT_PATH = ";1!005000032000055"
@@ -98,70 +104,59 @@ class FlexitGo:
                              SYSTEM_STATUS_PATH,
                              LAST_RESTART_REASON_PATH]
 
-    API_URL = "https://api.climatixic.com"
+    mode = {0: "Null",
+            1: "OFF",
+            2: "AWAY",
+            3: "HOME",
+            4: "HIGH",
+            5: "COOKER_HOOD",
+            6: "FIREPLACE",
+            7: "HIGH_DELAYED"}
+
     TOKEN_PATH = "/Token"
     PLANTS_PATH = "/Plants"
     DATAPOINTS_PATH = "/DataPoints"
     # FILTER_PATH = f"{DATAPOINTS_PATH}/Values?filterId="
     VALUES_PATH = f"{DATAPOINTS_PATH}/Values"
+    plantId = None
 
-    log = structlog.get_logger(__name__)
-    doSessionLock = asyncio.Lock()
-    fileReadLock = asyncio.Lock()
-    fileWriteLock = asyncio.Lock()
-    RETRIES = 3
-    RETRY_DELAY = 10  # seconds
-    tokenValidTo = None
-    tokenFileName = "/home/staffan/olis/olis_flexit/tokenfile.txt"
-    tokenFileRead = False
-    session = aiohttp.ClientSession(base_url=API_URL)
-    headers = {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept-Language": "en-us",
-        "Content-Type": "application/json; charset=utf-8",
-        "User-Agent": "Flexit%20GO/2.0.6 CFNetwork/1128.0.1 Darwin/19.6.0",
-        "Ocp-Apim-Subscription-Key": "c3fc1f14ce8747588212eda5ae3b439e",
-        "Host": "api.climatixic.com",
-    }
-
-    def __init__(self, username, password):
-        self.username = username
-        self.password = password
+    def __init__(self):
+        pass
 
     @classmethod
-    async def _readFileAsync(cls, filename):
-        async with cls.fileReadLock:
-            if os.path.exists(filename):
-                with open(filename, mode="r") as file:
-                    contents = ujson.load(file)
-                    return contents
+    async def create(cls, username, password, commonSession=None):
+        try:
+            if cls.fg is None:
+                cls.fg = cls()
+                if cls.apiHandler is None:
+                    cls.apiHandler = await APIFlexitgo.create(name="FlexitGo",
+                                                              commonSession=commonSession,
+                                                              tokenFileName="/home/staffan/olis/olis_flexit/tokenfile.txt",
+                                                              lastSessionFileName="/home/staffan/olis/olis_flexit/lastsessionfile.txt",
+                                                              headers={"Accept": "application/json",
+                                                                       "Accept-Encoding": "gzip, deflate, br",
+                                                                       "Accept-Language": "en-us",
+                                                                       "Content-Type": "application/json; charset=utf-8",
+                                                                       "User-Agent": "Flexit%20GO/2.0.6 CFNetwork/1128.0.1 Darwin/19.6.0",
+                                                                       "Ocp-Apim-Subscription-Key": "c3fc1f14ce8747588212eda5ae3b439e",
+                                                                       "Host": "api.climatixic.com"},
+                                                              data=f"grant_type=password&username={username}&password={password}".encode("ASCII"),
+                                                              loginUrls=[cls.TOKEN_PATH],
+                                                              BASE_URL="https://api.climatixic.com",
+                                                              RETRIES=3,
+                                                              RETRY_DELAY=300,
+                                                              THROTTLE_DELAY=0,
+                                                              THROTTLE_ERROR_DELAY=3*60*60)
 
-    @classmethod
-    async def _writeFileAsync(cls, filename, contents):
-        async with cls.fileWriteLock:
-            with open(filename, mode="w") as file:
-                ujson.dump(contents, file)
+                    await cls.fg.getPlant()
+            return cls.fg
 
-    @classmethod
-    async def _doRequest(cls, method, url, headers, data=None, params=None):
-        out = {}
-        async with FlexitGo.doSessionLock:
-            for i in range(cls.RETRIES):
-                try:
-                    async with cls.session.request(method=method, url=url, headers=headers, data=data, params=params) as response:
-                        out = await response.json()
+        except Exception as e:
+            cls.log.error(f"FlexitGo request error", error=e)
+            return None
 
-                    return out
-
-                except Exception as e:
-                    cls.log.error("Exception in _doRequest", error=e)
-                    if i < cls.RETRIES - 1:
-                        cls.log.warning(f"Retrying in {cls.RETRY_DELAY} seconds...")
-                        await asyncio.sleep(cls.RETRY_DELAY)
-                    else:
-                        cls.log.warning("Max retries reached. Attempting logon...")
-                        await clock_settime(clk_id, time).login()
+    async def logout(self):
+        await self.apiHandler.logout()
 
     def _path(self, path):
         return f"{self.plantId}{path}"
@@ -207,103 +202,47 @@ class FlexitGo:
         return round(float(self._str_sensor(path)), 1)
 
     def _calendar_active(self, path):
-        if self._present_priority(path) == 15:
-            return True
-        else:
-            return False
+        return self._present_priority(path) == 15
 
-    def _dirty_filter(self, filter_time_for_exchange):
-        if arrow.get(filter_time_for_exchange) >= arrow.now():
-            return False
-        else:
-            return True
+    @staticmethod
+    def _dirty_filter(filter_time_for_exchange):
+        return arrow.get(filter_time_for_exchange) < arrow.now()
 
-    def _ventilation_mode(self, ventilation_int):
-        mode = {0: "Null",
-                1: "OFF",
-                2: "AWAY",
-                3: "HOME",
-                4: "HIGH",
-                5: "COOKER_HOOD",
-                6: "FIREPLACE",
-                7: "HIGH_DELAYED"
-                }
-        return mode.get(ventilation_int, f"Unknown mode: {str(ventilation_int)}")
+    @classmethod
+    def _ventilation_mode(cls, ventilation_int):
+        return cls.mode.get(ventilation_int, f"Unknown mode: {str(ventilation_int)}")
 
-    def _to_efficiency(self, tilluft, uteluft, frånluft):
+    @staticmethod
+    def _to_efficiency(tilluft, uteluft, frånluft):
         return round(((tilluft - uteluft) / (frånluft - uteluft)) * 100, 1)
 
-    def _from_efficiency(self, uteluft, frånluft, avluft):
+    @staticmethod
+    def _from_efficiency(uteluft, frånluft, avluft):
         return round(((frånluft - avluft) / (frånluft - uteluft)) * 100, 1)
 
-    async def login(self):
-        for i in range(self.RETRIES):
-            try:
-                if not self.tokenFileRead:
-                    _tokenFromFile = await self._readFileAsync(self.tokenFileName)
-
-                if not self.tokenFileRead and _tokenFromFile:
-                    if "token" in _tokenFromFile:
-                        self.log.info("FlexitGo setting token from file")
-                        _token = _tokenFromFile.get("token")
-                        self.headers["Authorization"] = _token
-                        self.tokenValidTo = arrow.get(_tokenFromFile.get("tokenExpires"), tzinfo=("Europe/Stockholm"))
-                        self.tokenFileRead = True
-                        await self._validateToken()
-                    else:
-                        self.tokenFileRead = True
-                        self.log.warning("Melcloud token file damaged")
-                else:
-                    self.log.info("FlexitGo trying login")
-                    data = f"grant_type=password&username={self.username}&password={self.password}".encode("ASCII")
-                    out = await self._doRequest(method="POST", url=self.TOKEN_PATH, headers=self.headers, data=data)
-                    if out is not None and 'access_token' in out:
-                        _token = f"Bearer {out['access_token']}"
-                        self.headers["Authorization"] = _token
-                        fmt = "ddd, DD MMM YYYY HH:mm:ss ZZZ"
-                        self.tokenValidTo = arrow.get(out[".expires"], fmt).to("Europe/Stockholm")
-                        await self._writeFileAsync(self.tokenFileName, {"token": _token, "tokenExpires": self.tokenValidTo.format("YYYY-MM-DD HH:mm:ss")})
-                        if _token:
-                            self.log.info("FlexitGo login success")
-
-                await self.getPlant()
-                break
-
-            except Exception as e:
-                self.log.error("Flexitgo exception in login",  error=e)
-                if i < self.RETRIES - 1:
-                    self.log.info(f"Flexitgo retrying login in {self.RETRY_DELAY} seconds...")
-                    await asyncio.sleep(self.RETRY_DELAY)
-
-    async def _validateToken(self):
-        now = arrow.now("Europe/Stockholm")
-        if now >= self.tokenValidTo:
-            self.log.info("Melcloud token expired, logging in again")
-            await self.login()
-
-    async def getPlant(self):
+    @classmethod
+    async def getPlant(cls):
         out = {}
         try:
-            out = await self._doRequest(method="GET", url=self.PLANTS_PATH, headers=self.headers)
-            # async with self.session.get("https://api.climatixic.com/Plants", headers=self.headers) as response:
-            #    out = await response.json()
+            out = await cls.apiHandler.doSession(method="GET", url=cls.PLANTS_PATH)
             for d in out["items"]:
-                self.plantId = d["id"]
+                cls.plantId = d["id"]
 
         except Exception as e:
-            self.log.error("Exception in getPlant",  error=e, out=out)
+            cls.log.error("Exception in getPlant",  error=e, out=out)
 
         return out
 
     async def getDevice(self):
+        if self.plantId is None:
+            await self.getPlant()
+            
         # url = self._escaped_filter_url(self._create_url_from_paths(self.DEVICE_INFO_PATH_LIST))
         paramlist = await self._create_url_from_paths2(self.DEVICE_INFO_PATH_LIST)
-        param = {"filterId": ujson.dumps(paramlist, separators=(",", ":"))}
+        params = {"filterId": ujson.dumps(paramlist, separators=(",", ":"))}
 
         try:
-            self.deviceData = await self._doRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
-            # async with self.session.get(self.VALUES_PATH, headers=self.headers, params=param) as response:
-            #    self.deviceData = await response.json()
+            self.deviceData = await self.apiHandler.doSession(method="GET", url=self.VALUES_PATH, params=params)
 
             # pprint(self.deviceData)
 
@@ -323,15 +262,18 @@ class FlexitGo:
         return out
 
     async def getSensors(self):
-        await self._validateToken()
+        if self.plantId is None:
+            await self.getPlant()
+            
+        # await self.apiHandler._validateToken()
         out = {}
         # url1 = self._escaped_filter_url(self._create_url_from_paths(self.SENSOR_DATA_PATH_LIST))
         paramlist = self._create_url_from_paths2(self.SENSOR_DATA_PATH_LIST)
-        param = {"filterId": ujson.dumps(paramlist, separators=(",", ":"))}
-        now = arrow.now("Europe/Stockholm")
+        params = {"filterId": ujson.dumps(paramlist, separators=(",", ":"))}
+        now = arrow.now(self.TIME_ZONE)
 
         try:
-            self.sensorData = await self._doRequest(method="GET", url=self.VALUES_PATH, headers=self.headers, params=param)
+            self.sensorData = await self.apiHandler.doSession(method="GET", url=self.VALUES_PATH, params=params)
 
             out["temps"] = {"home_air_temperature": self._float_sensor(self.HOME_AIR_TEMPERATURE_PATH),
                             "away_air_temperature": self._float_sensor(self.AWAY_AIR_TEMPERATURE_PATH),
@@ -367,7 +309,7 @@ class FlexitGo:
                              "filter_time_for_exchange": now.shift(hours=self._int_sensor(self.FILTER_TIME_FOR_EXCHANGE_PATH) - self._int_sensor(self.FILTER_OPERATING_TIME_PATH)).format("YYYY-MM-DD")}
             out["filter"]["dirty_filter"] = self._dirty_filter(out["filter"]["filter_time_for_exchange"])
 
-            out["timestamp"] = now.format("YYYY-MM-DD HH:mm:ss")
+            out["timestamp"] = now.format(self.DATE_FORMAT)
 
         except Exception as e:
             self.log.error("Exception in getSensors",  error=e, out=out)
@@ -375,16 +317,16 @@ class FlexitGo:
         return out
 
     async def setSensor(self, path, body):
-        await self._validateToken()
+        if self.plantId is None:
+            await self.getPlant()
+            
+        # await self.apiHandler._validateToken()
         data_body = None if body is None else str(body)
-        url = self._escaped_datapoints_url(self._path(path))
+        _url = self._escaped_datapoints_url(self._path(path))
         data = ujson.dumps({"Value": data_body})
 
         try:
-            out = await self._doRequest(method="PUT", url=url, headers=self.headers, data=data)
-            # async with self.session.put(url, headers=self.headers, data=data) as response:
-            #    out = await response.json()
-
+            out = await self.apiHandler.doSession(method="PUT", url=_url, data=data)
             return out["stateTexts"][self._path(path)] == "Success"
 
         except Exception as e:
@@ -397,7 +339,7 @@ class FlexitGo:
     async def setAwayTemp(self, temp):
         return await self.setSensor(self.AWAY_AIR_TEMPERATURE_PATH, temp)
 
-    async def setPresetMode(self, presetMode):
+    async def setPresetMode(self, presetMode):   
         acceptedModes = ["HOME", "AWAY", "AWAY_DELAYED", "HIGH", "HIGH_ONTIMER", "FIREPLACE"]
 
         if presetMode not in acceptedModes:
@@ -451,7 +393,7 @@ class FlexitGo:
     async def setAwayDelay(self, delay):
         return await self.setSensor(self.AWAY_DELAY_PATH, delay)
 
-    async def setHeaterState(self, heater_bool: bool) -> bool:
+    async def setHeaterState(self, heater_bool):
         return await self.setSensor(self.HEATER_PATH, 1 if heater_bool else 0)
 
     async def setCalendarActive(self):
